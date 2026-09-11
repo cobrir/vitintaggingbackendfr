@@ -234,7 +234,7 @@ def ReturnFunctionJson(data, funcname, funcparam={}):
 
 @app.route("/", methods=["POST", "GET"])
 def main():
-    return "DISCORD.GG/YOURSERVERHERE"
+    return "DISCORD.GG/TGj2tFxs4w"
 
 @app.route("/v2/player/client/auth/begin/QUEST", methods=["POST"])
 def attestation_begin():
