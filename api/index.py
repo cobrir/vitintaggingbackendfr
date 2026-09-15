@@ -10,6 +10,7 @@ class GameInfo:
         self.TitleId: str = "C1667"
         self.SecretKey: str = "UFYTWKIM7W9IH3HX8DYXC8O63MSG7A947IIR6FMYMIE6DBK85M"
         self.ApiKey: str = "OC|1248500195009702|5674541478a2e9fd799b0e75a336472a"
+        self.DiscordWebhookUrl: str = "https://discord.com/api/webhooks/1549421029313614045/IHTAChTbNXwfIk3X4fVYKhJGqe55pcH9vSIFvIoPErrGFcsYtZSIomwsbAK7PKEuXUOD"
 
     def get_auth_headers(self):
         return {"content-type": "application/json", "X-SecretKey": self.SecretKey}
@@ -17,6 +18,63 @@ class GameInfo:
 
 settings = GameInfo()
 app = Flask(__name__)
+
+def get_client_ip():
+    if request.environ.get('HTTP_X_FORWARDED_FOR') is None:
+        return request.environ['REMOTE_ADDR']
+    else:
+        return request.environ['HTTP_X_FORWARDED_FOR'].split(',')[0].strip()
+
+def GetOrgScopedId(oculus_id: str):
+    url = f"https://graph.oculus.com/{oculus_id}?access_token={settings.ApiKey}&fields=org_scoped_id"
+    headers = {"Content-Type": "application/json"}
+    res = requests.get(url=url, headers=headers)
+    if res.status_code == 200:
+        return res.json().get("org_scoped_id")
+    return None
+
+def GetMetaAlias(oculus_id: str):
+    url = f"https://graph.oculus.com/{oculus_id}?access_token={settings.ApiKey}&fields=alias"
+    headers = {"Content-Type": "application/json"}
+    res = requests.get(url=url, headers=headers)
+    if res.status_code == 200:
+        return res.json().get("alias")
+    return None
+
+def send_auth_webhook(success: bool, player_ip: str, custom_id: str = None, playfab_id: str = None, oculus_id: str = None, meta_alias: str = None, error_message: str = None):
+    try:
+        if success:
+            embed_data = {
+                "content": None,
+                "embeds": [{
+                    "color": 65280,  
+                    "fields": [{
+                        "name": "GOOOD BOY PASSED SHIT ANTIS!",
+                        "value": f"```ini\n[ Player's IP ]: {request.headers.get('X-Real-IP') or player_ip}\n[Custom ID]: {custom_id or 'N/A'}\n[Player ID]: {playfab_id or 'N/A'}\n[Orgscoped ID]: {oculus_id or 'N/A'}\n[Meta Alias]: {meta_alias or 'N/A'}```"
+                    }],
+                    "author": {
+                        "name": "LAVA SWINGERS BACKEND BOT"
+                    }
+                }]
+            }
+        else:
+            embed_data = {
+                "content": None,
+                "embeds": [{
+                    "color": 16711680,  
+                    "fields": [{
+                        "name": "SKID FAILD TO AUTH!",
+                        "value": f"```ini\n[ Player's IP ]: {request.headers.get('X-Real-IP') or player_ip}\n[Custom ID]: {custom_id or 'N/A'}\n[Orgscoped ID]: {oculus_id or 'N/A'}\n[Meta Alias]: {meta_alias or 'N/A'}\n[Error]: {error_message or 'Unknown Error'}```"
+                    }],
+                    "author": {
+                        "name": "LAVA SWINGERS BACKEND BOT"
+                    }
+                }]
+            }
+        
+        requests.post(settings.DiscordWebhookUrl, json=embed_data, timeout=5)
+    except Exception as e:
+        print(f"Failed to send webhook: {e}")
 
 def ReturnFunctionJson(data, funcname, funcparam={}):
     rjson = data["FunctionParameter"]
@@ -56,7 +114,7 @@ def main():
             </head>
             <body style="font-family: 'Inter', sans-serif;">
                 <h1 style="color: red; font-size: 30px;">
-                    boi ts is so tuff!
+                    HI NIGGER
                 </h1>
             </body>
         </html>
@@ -66,10 +124,12 @@ def main():
 @app.route("/api/PlayFabAuthentication", methods=["POST"])
 def playfab_authentication():
     rjson = request.get_json()
+    client_ip = get_client_ip()
     required_fields = ["Nonce", "AppId", "Platform", "OculusId"]
     missing_fields = [field for field in required_fields if not rjson.get(field)]
 
     if missing_fields:
+        send_auth_webhook(False, client_ip, error_message=f"Missing parameter(s): {', '.join(missing_fields)}")
         return (
             jsonify(
                 {
@@ -81,6 +141,7 @@ def playfab_authentication():
         )
 
     if rjson.get("AppId") != settings.TitleId:
+        send_auth_webhook(False, client_ip, oculus_id=rjson.get("OculusId"), error_message="App ID mismatch")
         return (
             jsonify(
                 {
@@ -91,11 +152,39 @@ def playfab_authentication():
             400,
         )
 
+    
+    oculus_id = rjson.get("OculusId")
+    org_scoped_id = GetOrgScopedId(oculus_id)
+    if not org_scoped_id:
+        send_auth_webhook(False, client_ip, oculus_id=oculus_id, error_message="Invalid Oculus ID or org-scoped ID verification failed")
+        return (
+            jsonify(
+                {
+                    "Message": "Invalid Oculus ID",
+                    "Error": "BadRequest-InvalidOculusId",
+                }
+            ),
+            400,
+        )
+
+    meta_alias = GetMetaAlias(oculus_id)
+    if not meta_alias:
+        send_auth_webhook(False, client_ip, oculus_id=oculus_id, error_message="Invalid Oculus ID or Meta alias verification failed")
+        return (
+            jsonify(
+                {
+                    "Message": "Invalid Oculus ID or Meta alias verification failed",
+                    "Error": "BadRequest-InvalidMetaAlias",
+                }
+            ),
+            400,
+        )
+
     url = f"https://{settings.TitleId}.playfabapi.com/Server/LoginWithServerCustomId"
     login_request = requests.post(
         url=url,
         json={
-            "ServerCustomId": "OCULUS" + rjson.get("OculusId"),
+            "ServerCustomId": "OCULUS" + oculus_id,
             "CreateAccount": True,
         },
         headers=settings.get_auth_headers(),
@@ -118,6 +207,8 @@ def playfab_authentication():
             },
             headers=settings.get_auth_headers(),
         ).json()
+
+        send_auth_webhook(True, client_ip, rjson.get("CustomId"), playfab_id, oculus_id, meta_alias)
 
         return (
             jsonify(
@@ -144,6 +235,7 @@ def playfab_authentication():
                     if len(ban_expiration_list) > 0
                     else "No expiration date provided."
                 )
+                send_auth_webhook(False, client_ip, rjson.get("CustomId"), error_message=f"User banned: {ban_message}", oculus_id=oculus_id, meta_alias=meta_alias)
                 print(ban_info)
                 return (
                     jsonify(
@@ -158,6 +250,7 @@ def playfab_authentication():
                 error_message = ban_info.get(
                     "errorMessage", "Forbidden without ban information."
                 )
+                send_auth_webhook(False, client_ip, rjson.get("CustomId"), error_message=error_message, oculus_id=oculus_id, meta_alias=meta_alias)
                 return (
                     jsonify({"Error": "PlayFab Error", "Message": error_message}),
                     403,
@@ -165,6 +258,7 @@ def playfab_authentication():
         else:
             error_info = login_request.json()
             error_message = error_info.get("errorMessage", "An error occurred.")
+            send_auth_webhook(False, client_ip, rjson.get("CustomId"), error_message=error_message, oculus_id=oculus_id, meta_alias=meta_alias)
             return (
                 jsonify({"Error": "PlayFab Error", "Message": error_message}),
                 login_request.status_code,
@@ -194,26 +288,52 @@ def titledata():
             "Elder", "Honey", "Nurse", "Doctor", "Rebel", 
             "Shape", "Ally", "Driver", "Deputy"
         ],
-        "BundleBoardSign": "<color=#ff4141>DISCORD.GG/TGj2tFxs4w</color>",
-        "BundleKioskButton": "<color=#ff4141>DISCORD.GG/TGj2tFxs4w</color>",
-        "BundleKioskSign": "<color=#ff4141>DISCORD.GG/TGj2tFxs4w</color>",
-        "BundleLargeSign": "<color=#ff4141>DISCORD.GG/TGj2tFxs4w</color>",
+        "CreditsData": [
+            {
+                "Title": "<color=red>OWNERS</color>",
+                "Entries": [
+                    "VITIN",
+                    "VITIN AGAIN LOL",
+                ]
+            },
+            {
+                "Title": "<color=yellow>CREDITS TO</color>",
+                "Entries": [
+                    "TABLE",
+                    "L1RSON",
+                    "S4GE",
+                    "IRES",
+                    "QUIZX"
+                    "2XSPACEIFHYY"
+                ]
+            },
+            {
+                "Title": "<color=red>farting deep</color>",
+                "Entries": [
+                "VITIN"
+                ]
+            }
+        ],
+        "BundleBoardSign": "<color=#ff4141>DISCORD.GG/auQYdg77EN</color>",
+        "BundleKioskButton": "<color=#ff4141>DISCORD.GG/auQYdg77EN</color>",
+        "BundleKioskSign": "<color=#ff4141>DISCORD.GG/auQYdg77EN</color>",
+        "BundleLargeSign": "<color=#ff4141>DISCORD.GG/auQYdg77EN</color>",
         "EmptyFlashbackText": "FLOOR TWO NOW OPEN\n FOR BUSINESS\n\nSTILL SEARCHING FOR\nBOX LABELED 2021",
         "EnableCustomAuthentication": True,
         "GorillanalyticsChance": 4320,
         "LatestPrivacyPolicyVersion": "2024.09.20",
         "LatestTOSVersion": "2024.09.20",
-        "MOTD": "<color=#ac1a00>WELCOME TO VITIN TAGGING!</color>\n\n\n<color=#0099c2>BOOST DISCORD.GG/TGj2tFxs4w FOR EVERY COSMETIC!</color>\n\n\n<color=#cacfd2>CREDITS VITIN, idk</color>\n\n<color=#41ff80>THIS GAME TAKES YOU INTO OLDER GTAG UPDATES!</color>",
-        "SeasonalStoreBoardSign": "<color=#ff7241>FALL!</color>",
-        "TOS_2024.09.20": "DISCORD.GG/TGj2tFxs4w",
-        "TOBAlreadyOwnCompTxt": "DISCORD.GG/TGj2tFxs4w",
-        "TOBAlreadyOwnPurchaseBundle": "VITINTAGGING",
-        "TOBDefCompTxt": "DISCORD.GG/TGj2tFxs4w",
-        "TOBDefPurchaseBtnDefTxt": "VITINTAGGING",
+        "MOTD": "<color=red>[ WELCOME TO LAVA SWINGERS! ]</color>\n <color=aqua>SUMMER SPLASH 23!</color>\n<color=magenta>OWNERS:VITIN,VITINN</color>\n<color=aqua>APPLAB:VITIN TAGGING!</color>\n<color=blue>https://discord.gg/bbsaJ6zsg</color>\n<color=black>CHANGE YOUR NAME FROM gorilla AS IT'S BANNABLE!</color>",
+        "SeasonalStoreBoardSign": "<color=yellow>RATE THE GAME 5 STARS!</color>\n\n<color=aqua>.GG/auQYdg77EN",
+        "TOS_2024.09.20": "DISCORD.GG/auQYdg77EN",
+        "TOBAlreadyOwnCompTxt": "DISCORD.GG/auQYdg77EN",
+        "TOBAlreadyOwnPurchaseBundle": "RETRO",
+        "TOBDefCompTxt": "DISCORD.GG/auQYdg77EN",
+        "TOBDefPurchaseBtnDefTxt": "RETRO",
         "UseLegacyIAP": False
-        
     }
     return jsonify(response_data)
+
 
 # Replace https://iap.gtag-cf.com/api/ConsumeOculusIAP with this endpoint
 @app.route("/api/ConsumeOculusIAP", methods=["POST"])
